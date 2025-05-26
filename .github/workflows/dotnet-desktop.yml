@@ -1,0 +1,44 @@
+name: .NET Desktop CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Restore
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --no-restore --configuration Release --verbosity normal
+
+    - name: Run Tests
+      run: dotnet test --no-build --verbosity normal
+
+    - name: Check Formatting
+      run: |
+        echo "### Repository Structure ###"
+        ls -R
+        echo "### Installing formatter ###"
+        dotnet tool install -g dotnet-format
+        echo "### Running format check ###"
+        dotnet format --check --verbosity diagnostic || echo "Formatting issues found (non-blocking)"
+        exit 0  # Ensure step always passes
+
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: cybersecurity-chatbot
+        path: bin/Release/net9.0-windows/
