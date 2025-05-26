@@ -2,12 +2,31 @@ using System;
 using System.Threading;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
+using System.Linq;
 
 class Program
 {
-    // Stores user information during the session
+    // Enhanced memory system to store user information and conversation context
     private static Dictionary<string, string> userMemory = new Dictionary<string, string>();
+    private static List<string> conversationHistory = new List<string>();
     private static Random random = new Random();
+    
+    // Sentiment keywords for basic emotion detection
+    private static readonly Dictionary<string, string> sentiments = new Dictionary<string, string>
+    {
+        { "worried", "concerned" },
+        { "scared", "concerned" },
+        { "anxious", "concerned" },
+        { "confused", "uncertain" },
+        { "unsure", "uncertain" },
+        { "don't understand", "uncertain" },
+        { "happy", "positive" },
+        { "excited", "positive" },
+        { "interested", "positive" },
+        { "frustrated", "negative" },
+        { "angry", "negative" },
+        { "annoyed", "negative" }
+    };
 
     static void Main(string[] args)
     {
@@ -41,63 +60,60 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.WriteLine("I'm here to help you stay safe online.");
         Console.WriteLine();
     }
-// Handles audio playback with different operating systems (MacOS,Windows,Linux)
-    static void PlayAudio() 
-{
-    try
-    {
-        var process = new System.Diagnostics.Process();
-        
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            // Windows - using Media Player 
-            process.StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = "/C start mplay32 /play /close welcome.wav",
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-        }
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            // macOS - using afplay 
-            process.StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "afplay",
-                Arguments = "welcome.wav",
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-        }
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-        {
-            // Linux - using aplay (ALSA) or paplay (PulseAudio)
-            process.StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "bash",
-                Arguments = "-c \"aplay welcome.wav || paplay welcome.wav\"",
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-        }
-        else
-        {
-            Console.WriteLine("Audio playback not supported on this platform");
-            return;
-        }
 
-        using (process)
+    static void PlayAudio() 
+    {
+        try
         {
-            process.Start();
-            Thread.Sleep(2000); // Let audio play for 2 seconds
+            var process = new System.Diagnostics.Process();
+            
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                process.StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = "/C start mplay32 /play /close welcome.wav",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                process.StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "afplay",
+                    Arguments = "welcome.wav",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                process.StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "bash",
+                    Arguments = "-c \"aplay welcome.wav || paplay welcome.wav\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+            }
+            else
+            {
+                Console.WriteLine("Audio playback not supported on this platform");
+                return;
+            }
+
+            using (process)
+            {
+                process.Start();
+                Thread.Sleep(2000);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Couldn't play audio: {ex.Message}");
         }
     }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"Couldn't play audio: {ex.Message}");
-    }
-}
 
     static string GetUserName() 
     {
@@ -122,11 +138,11 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         return name;
     }
     
-    //conversation handler
     static void RunChatLoop(string userName)
     {
         bool continueChat = true;
         int conversationDepth = 0;
+        string currentTopic = "";
         
         DisplayHelpMenu();
         
@@ -140,18 +156,45 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
                 ShowErrorMessage("I didn't quite understand that. Could you rephrase?");
                 continue;
             }
+
+            // Store user input in conversation history
+            conversationHistory.Add(input);
+            
+            // Detect sentiment and adjust response accordingly
+            string detectedSentiment = DetectSentiment(input);
             
             if (ProcessBasicCommands(input, userName, ref continueChat)) continue;
-            if (ProcessSecurityTopics(input)) continue;
-            if (ProcessFollowUpQuestions(input, ref conversationDepth)) continue;
+            
+            // Check if this is a follow-up question about the current topic
+            if (currentTopic != "" && (input.Contains("more") || input.Contains("explain") || input.Contains("example")))
+            {
+                ProcessFollowUpQuestion(currentTopic, detectedSentiment);
+                continue;
+            }
+            
+            // Process security topics and update current topic
+            currentTopic = ProcessSecurityTopics(input, detectedSentiment);
+            if (!string.IsNullOrEmpty(currentTopic)) continue;
             
             ShowErrorMessage("I didn't understand that. Try asking about:\n" +
-                            "- Password safety\n- Phishing\n- Malware\n- Social media\n- VPNs\n" +
-                            "- Two-factor auth\n- Data backups\n- Or say 'help' for more options");
+                           "- Password safety\n- Phishing\n- Malware\n- Social media\n- VPNs\n" +
+                           "- Two-factor auth\n- Data backups\n- Or say 'help' for more options");
         }
     }
 
-    static bool ProcessBasicCommands(string input, string userName, ref bool continueChat) //(Static bool is always true, 2013)
+    static string DetectSentiment(string input)
+    {
+        foreach (var sentiment in sentiments)
+        {
+            if (input.Contains(sentiment.Key))
+            {
+                return sentiment.Value;
+            }
+        }
+        return "neutral";
+    }
+
+    static bool ProcessBasicCommands(string input, string userName, ref bool continueChat)
     {
         if (input.Contains("bye") || input.Contains("exit") || input.Contains("quit"))
         {
@@ -167,100 +210,120 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         else if (input.Contains("thanks") || input.Contains("thank you"))
         {
             ShowResponse(GetRandomResponse(new[] {
-                "You're welcome!",
-                "Happy to help!",
-                "That's what I'm here for!"
+                "You're welcome! Is there anything else you'd like to know about cybersecurity?",
+                "Happy to help! Remember, staying safe online is a continuous journey.",
+                "That's what I'm here for! Let me know if you have more questions."
             }));
             return true;
         }
         else if (input.Contains("how are you"))
         {
             ShowResponse(GetRandomResponse(new[] {
-                "I'm just a bot, but I'm functioning well! Ready to help with cybersecurity questions:)",
-                "Doing great! Let me know how I can help with cybersecurity today ;)",
-                "I don't have feelings, but my threat detection algorithms are at 100% ;)"
+                "I'm functioning well and ready to help you stay safe online!",
+                "I'm here and eager to share cybersecurity knowledge with you.",
+                "All systems operational! What would you like to learn about cybersecurity?"
             }));
             return true;
         }
         else if (input.Contains("purpose") || input.Contains("what do you do"))
         {
-            ShowResponse("I'm here to educate you about cybersecurity best practices and help you stay safe online.");
+            ShowResponse("I'm your cybersecurity awareness assistant, here to help you understand and implement better online safety practices. What specific aspect of cybersecurity would you like to learn about?");
             return true;
         }
         
         return false;
     }
 
-    static bool ProcessSecurityTopics(string input)
+    static string ProcessSecurityTopics(string input, string sentiment)
     {
+        string topic = "";
+        
         if (input.Contains("password") || input.Contains("credential"))
         {
-            ShowPasswordTips();
-            return true;
+            ShowPasswordTips(sentiment);
+            topic = "password";
         }
         else if (input.Contains("phish") || input.Contains("scam"))
         {
-            ShowPhishingTips();
-            return true;
+            ShowPhishingTips(sentiment);
+            topic = "phishing";
         }
         else if (input.Contains("brows") || input.Contains("internet"))
         {
-            ShowBrowsingTips();
-            return true;
+            ShowBrowsingTips(sentiment);
+            topic = "browsing";
         }
         else if (input.Contains("privacy"))
         {
-            ShowPrivacyTips();
-            return true;
+            ShowPrivacyTips(sentiment);
+            topic = "privacy";
         }
         else if (input.Contains("malware") || input.Contains("virus"))
         {
-            ShowMalwareTips();
-            return true;
+            ShowMalwareTips(sentiment);
+            topic = "malware";
         }
         else if (input.Contains("social media") || input.Contains("facebook") || input.Contains("instagram"))
         {
-            ShowSocialMediaTips();
-            return true;
+            ShowSocialMediaTips(sentiment);
+            topic = "social";
         }
         else if (input.Contains("vpn"))
         {
-            ShowVPNTips();
-            return true;
+            ShowVPNTips(sentiment);
+            topic = "vpn";
         }
         else if (input.Contains("two factor") || input.Contains("2fa"))
         {
-            ShowTwoFactorAuthTips();
-            return true;
+            ShowTwoFactorAuthTips(sentiment);
+            topic = "2fa";
         }
         else if (input.Contains("backup") || input.Contains("ransomware"))
         {
-            ShowBackupTips();
-            return true;
+            ShowBackupTips(sentiment);
+            topic = "backup";
         }
         
-        return false;
+        if (!string.IsNullOrEmpty(topic))
+        {
+            userMemory["last_topic"] = topic;
+            return topic;
+        }
+        
+        return "";
     }
 
-    static bool ProcessFollowUpQuestions(string input, ref int conversationDepth)
+    static void ProcessFollowUpQuestion(string topic, string sentiment)
     {
-        if (input.Contains("more") || input.Contains("detail") || input.Contains("explain"))
+        Console.ForegroundColor = ConsoleColor.Blue;
+        Console.WriteLine($"Let me provide more detailed information about {topic}...");
+        
+        switch (topic.ToLower())
         {
-            conversationDepth++;
-            ShowResponse(GetRandomResponse(new[] {
-                "Let me go into more detail about that...",
-                "Here's some additional information:",
-                "I'd be happy to elaborate:"
-            }));
-            return true;
-        }
-        else if (input.Contains("example") || input.Contains("show me"))
-        {
-            ShowResponse("Here's a practical example scenario...");
-            return true;
+            case "password":
+                Console.WriteLine("Here's a practical example of a strong password system:");
+                Console.WriteLine("1. Use a password manager like Bitwarden or 1Password");
+                Console.WriteLine("2. Generate unique 16+ character passwords for each account");
+                Console.WriteLine("3. Use the password manager's security check features");
+                break;
+                
+            case "phishing":
+                Console.WriteLine("Here's a real-world example of a phishing attempt:");
+                Console.WriteLine("1. Email claims to be from your bank about suspicious activity");
+                Console.WriteLine("2. Creates urgency: 'Account will be locked in 24 hours!'");
+                Console.WriteLine("3. Links to a fake website that looks legitimate");
+                Console.WriteLine("4. Asks for login credentials or personal information");
+                break;
+                
+            // Add similar detailed responses for other topics
+            
+            default:
+                Console.WriteLine("I'll be happy to explain more about any specific aspect you're interested in.");
+                break;
         }
         
-        return false;
+        Console.ResetColor();
+        Console.WriteLine();
     }
 
     static void DisplayHelpMenu()
@@ -268,11 +331,14 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.ForegroundColor = ConsoleColor.Magenta;
         Console.WriteLine("You can ask me about:");
         Console.WriteLine("- Password safety            - Social media risks");
-        Console.WriteLine("- Phishing scams             - VPN benefits");
-        Console.WriteLine("- Malware protection         - Two-factor auth");
-        Console.WriteLine("- Privacy tips               - Data backups");
+        Console.WriteLine("- Phishing scams            - VPN benefits");
+        Console.WriteLine("- Malware protection        - Two-factor auth");
+        Console.WriteLine("- Privacy tips              - Data backups");
         Console.WriteLine("- Safe browsing");
-        Console.WriteLine("\nOr say 'bye' to exit, 'help' to see this again, or 'more' for details");
+        Console.WriteLine("\nYou can also:");
+        Console.WriteLine("- Ask for more details or examples");
+        Console.WriteLine("- Share how you feel about cybersecurity");
+        Console.WriteLine("- Say 'bye' to exit or 'help' to see this again");
         Console.ResetColor();
         Console.WriteLine();
     }
@@ -302,13 +368,28 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
     {
         Console.ForegroundColor = ConsoleColor.Yellow;
         Console.WriteLine($"Goodbye, {userName}! Stay safe online!");
+        if (userMemory.ContainsKey("last_topic"))
+        {
+            Console.WriteLine($"Remember to implement the {userMemory["last_topic"]} safety tips we discussed!");
+        }
         Console.ResetColor();
     }
 
-    // Expanded security topic methods
-    static void ShowPasswordTips() //(Password best practices, 2025)
+    // Enhanced security topic methods with sentiment awareness
+    static void ShowPasswordTips(string sentiment)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
+        
+        // Adjust response based on sentiment
+        if (sentiment == "concerned")
+        {
+            Console.WriteLine("I understand your concerns about password security. Let me help you with some straightforward tips:");
+        }
+        else if (sentiment == "uncertain")
+        {
+            Console.WriteLine("Don't worry! Password security can seem complicated, but I'll break it down into simple steps:");
+        }
+        
         Console.WriteLine("Password safety is crucial! Here are comprehensive tips:");
         Console.WriteLine("- Use at least 12 characters (16+ for important accounts)");
         Console.WriteLine("- Create passphrases: 'PurpleTiger$JumpsHigh!' is better than 'P@ssw0rd'");
@@ -320,9 +401,19 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.WriteLine();
     }
 
-    static void ShowPhishingTips() //(How to recognize and avoid phishing scams, 2019)
+    static void ShowPhishingTips(string sentiment)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
+        
+        if (sentiment == "concerned")
+        {
+            Console.WriteLine("It's good that you're cautious about phishing. Here's how to protect yourself:");
+        }
+        else if (sentiment == "uncertain")
+        {
+            Console.WriteLine("Let me explain phishing in simple terms and how to stay safe:");
+        }
+        
         Console.WriteLine("Phishing scams try to trick you into giving personal information:");
         Console.WriteLine("- Verify sender email addresses (hover to see the real address)");
         Console.WriteLine("- Watch for urgency tactics ('Your account will be closed!')");
@@ -333,9 +424,19 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.WriteLine();
     }
 
-    static void ShowBrowsingTips() //(Anastasiia, 2021)
+    static void ShowBrowsingTips(string sentiment)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
+        
+        if (sentiment == "concerned")
+        {
+            Console.WriteLine("I understand your concerns about online safety. Here are proven ways to browse more securely:");
+        }
+        else if (sentiment == "uncertain")
+        {
+            Console.WriteLine("Safe browsing doesn't have to be complicated. Here are the key things to remember:");
+        }
+        
         Console.WriteLine("Safe browsing practices:");
         Console.WriteLine("- Look for 'https://' and padlock icon (but know some malicious sites use HTTPS too)");
         Console.WriteLine("- Use browser extensions like uBlock Origin and Privacy Badger");
@@ -346,9 +447,19 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.WriteLine();
     }
 
-    static void ShowPrivacyTips() //(Online privacy and safety tips —, 2023)
+    static void ShowPrivacyTips(string sentiment)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
+        
+        if (sentiment == "concerned")
+        {
+            Console.WriteLine("Privacy is a valid concern in today's digital world. Here's how to protect yours:");
+        }
+        else if (sentiment == "uncertain")
+        {
+            Console.WriteLine("Let's start with the basics of protecting your privacy online:");
+        }
+        
         Console.WriteLine("Advanced privacy protection:");
         Console.WriteLine("- Use encrypted messaging apps (Signal, WhatsApp) instead of SMS");
         Console.WriteLine("- Review app permissions monthly and revoke unnecessary access");
@@ -359,9 +470,19 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.WriteLine();
     }
 
-    static void ShowMalwareTips() //(Radwan, 2024)
+    static void ShowMalwareTips(string sentiment)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
+        
+        if (sentiment == "concerned")
+        {
+            Console.WriteLine("Malware can be scary, but there are effective ways to protect yourself:");
+        }
+        else if (sentiment == "uncertain")
+        {
+            Console.WriteLine("Let me explain malware protection in simple terms:");
+        }
+        
         Console.WriteLine("Malware protection strategies:");
         Console.WriteLine("- Keep all software updated, especially your OS and browser");
         Console.WriteLine("- Use reputable antivirus software (Windows Defender is sufficient for most)");
@@ -372,9 +493,19 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.WriteLine();
     }
 
-    static void ShowSocialMediaTips() //(Share with care: Staying safe on social media - national cybersecurity alliance, 2023)
+    static void ShowSocialMediaTips(string sentiment)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
+        
+        if (sentiment == "concerned")
+        {
+            Console.WriteLine("Social media privacy is important. Here's how to stay safe while staying connected:");
+        }
+        else if (sentiment == "uncertain")
+        {
+            Console.WriteLine("Social media can be safe when you follow these guidelines:");
+        }
+        
         Console.WriteLine("Social media safety:");
         Console.WriteLine("- Review privacy settings monthly (platforms often change defaults)");
         Console.WriteLine("- Be cautious with quizzes/apps that request permissions");
@@ -385,9 +516,19 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.WriteLine();
     }
 
-    static void ShowVPNTips() //(14 most interesting uses of a VPN, 2025)
+    static void ShowVPNTips(string sentiment)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
+        
+        if (sentiment == "concerned")
+        {
+            Console.WriteLine("VPNs are a great tool for online privacy. Here's what you need to know:");
+        }
+        else if (sentiment == "uncertain")
+        {
+            Console.WriteLine("Let me explain VPNs in simple terms and why they're useful:");
+        }
+        
         Console.WriteLine("VPN guidance:");
         Console.WriteLine("- Essential on public WiFi (airports, coffee shops)");
         Console.WriteLine("- Choose reputable providers (avoid free VPNs)");
@@ -398,9 +539,19 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.WriteLine();
     }
 
-    static void ShowTwoFactorAuthTips() //(Your two-factor authentication methods – ranked, 2024)
+    static void ShowTwoFactorAuthTips(string sentiment)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
+        
+        if (sentiment == "concerned")
+        {
+            Console.WriteLine("2FA is one of the best ways to protect your accounts. Here's why and how:");
+        }
+        else if (sentiment == "uncertain")
+        {
+            Console.WriteLine("Two-factor authentication is simpler than it sounds. Let me explain:");
+        }
+        
         Console.WriteLine("Two-Factor Authentication (2FA):");
         Console.WriteLine("- Always enable for email, banking, and social media");
         Console.WriteLine("- Use authenticator apps (Google/Microsoft Authenticator) over SMS");
@@ -411,9 +562,19 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.WriteLine();
     }
 
-    static void ShowBackupTips() //(6 simple backup tips for your computer, 2022)
+    static void ShowBackupTips(string sentiment)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
+        
+        if (sentiment == "concerned")
+        {
+            Console.WriteLine("Data loss can be prevented with proper backups. Here's how to protect your files:");
+        }
+        else if (sentiment == "uncertain")
+        {
+            Console.WriteLine("Backups don't have to be complicated. Here's what you need to know:");
+        }
+        
         Console.WriteLine("Data backup best practices:");
         Console.WriteLine("- Follow the 3-2-1 rule: 3 copies, 2 media types, 1 offsite");
         Console.WriteLine("- Test restores periodically - backups are useless if they don't work");
@@ -424,38 +585,3 @@ _/ ___<   |  | | __ \_/ __ \_  __ \  /  ___// ___\|  |  \ /  _ \ /  _ \|  |
         Console.WriteLine();
     }
 }
-
-/*
-Reference List:
-
-6 simple backup tips for your computer (2022) Kingston Technology Company. Available at: https://www.kingston.com/en/blog/personal-storage/computer-backup-tips (Accessed: April 22, 2025).
-
-
-14 most interesting uses of a VPN (2025) Nordvpn.com. Available at: https://nordvpn.com/blog/interesting-vpn-uses/ (Accessed: April 22, 2025).
-
-
-Anastasiia (2021) How to browse the internet safely: 10 tips, Swiss Cyber Institute. Available at: https://swisscyberinstitute.com/blog/10-tips-on-how-to-browse-the-internet-safely/ (Accessed: April 22, 2025).
-
-
-How to recognize and avoid phishing scams (2019) Consumer Advice. Available at: https://consumer.ftc.gov/articles/how-recognize-and-avoid-phishing-scams (Accessed: April 22, 2025).
-
-
-Online privacy and safety tips — (2023) Safety Net Project. Available at: https://www.techsafety.org/onlineprivacyandsafetytips (Accessed: April 10, 2025).
-
-
-Password best practices (2025) UC Santa Barbara Information Technology. Available at: https://it.ucsb.edu/general-security-resources/password-best-practices (Accessed: April 22, 2025).
-
-
-Radwan, A. (2024) MalwareTips review: A helpful community or a famous hoax?, Internet Safety Statistics. Available at: https://www.internetsafetystatistics.com/malwaretips-review/ (Accessed: April 22, 2025).
-
-
-Share with care: Staying safe on social media - national cybersecurity alliance (2023) Staysafeonline.org. Available at: https://www.staysafeonline.org/articles/share-with-care-staying-safe-on-social-media (Accessed: April 21, 2025).
-
-
-Static bool is always true (2013) Stack Overflow. Available at: https://stackoverflow.com/questions/15229487/static-bool-is-always-true (Accessed: January 22, 2025).
-
-
-Your two-factor authentication methods – ranked (2024) Own Your Online. Available at: https://www.ownyouronline.govt.nz/news-and-alerts/most-secure-2fa-method/ (Accessed: April 22, 2025).
-
-
-*/
