@@ -6,3 +6,4 @@ obj/
 *.cache
 *.swp
 .DS_Store
+.env
